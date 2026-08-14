@@ -189,7 +189,50 @@ BE2 не пишет SQL.
 Поля: `code`, `name`, `description`, `imageUrl`.
 ## Блок 4 — `action`
 Ровно **одно** действие.
-Действия обговорим позже
+
+# Contract D — `ShareRecap` (публичная версия итогов)
+
+**Назначение:** урезанная версия `Recap` для публичной ссылки.  
+Frontend рендерит карточку без доступа к профилю пользователя.
+
+## Структура
+
+```json
+{
+  "year": 2026,
+  "role": {
+    "code": "seller",
+    "name": "Продавец",
+    "title": "В этом году ты был на волне продаж!"
+  },
+  "metrics": [
+    {
+      "type": "favorites_count",
+      "title": "Избранное",
+      "text": "Коллекция избранного за год — 3 объявлений.",
+      "highlights": ["3 объявлений"]
+    }
+  ],
+  "achievements": [
+    {
+      "code": "both_sides",
+      "name": "Две стороны рынка",
+      "imageUrl": "/static/achievements/two_faced_market.png"
+    }
+  ]
+}
+```
+
+## Что остаётся и что убирается
+
+| Остаётся | Убирается |
+| --- | --- |
+| `year` | `id`, `userId`, `createdAt`, `debug` |
+| `role.code`, `role.name`, `role.title` | `role.subtitle`, `role.why`, `role.activitySharePercent` |
+| `metrics[].type/title/text/highlights` | `metrics[].payload` |
+| `achievements[].code/name/imageUrl` | `achievements[].description` |
+| — | весь блок `action` |
+
 # Contract C  HTTP JSON API
 Назначение: контракт между frontend и backend.  
 Frontend не считает роли/метрики/ачивки/действие — только рендерит объект `Recap` (Contract B).
@@ -414,7 +457,128 @@ Content-Type: image/png
 
 Если файл не найден, возвращается `404 Not Found`.
 
-### 7) `GET /api/health`
+### 7) `GET /api/users/{userId}/prediction`
+Получить предсказание на следующий год в стиле печенья с предсказанием.
+
+Это не аналитический прогноз и не обещание результата. Текст нужен как лёгкий позитивный контент для пользовательского сценария.
+
+#### Path params
+- `userId` (`int64`)
+
+#### Example
+```text
+GET /api/users/1/prediction
+```
+
+Год не передаётся в query params. Backend использует активный год итогов и возвращает предсказание на следующий год.
+
+#### Response `200`
+```json
+{
+  "userId": 910001,
+  "year": 2027,
+  "title": "Твоё предсказание на 2027",
+  "text": "В следующем году тебя ждёт неожиданно выгодная находка. Главное — не пролистать её мимо.",
+  "type": "fortune"
+}
+```
+
+Поля:
+- `userId` — идентификатор пользователя;
+- `year` — год предсказания;
+- `title` — заголовок карточки;
+- `text` — короткий текст предсказания;
+- `type` — тип ответа, всегда `fortune`.
+
+Если внешний AI API недоступен или не настроен, backend возвращает безопасный локальный fallback-текст в том же формате.
+
+#### Ошибки
+- `400 VALIDATION_ERROR` — невалидный `userId`;
+- `404 USER_NOT_FOUND` — пользователь не найден;
+- `500 INTERNAL_ERROR` — внутренняя ошибка.
+
+### 8) `POST /api/users/{userId}/recap/share`
+Создать публичную ссылку на уже сгенерированные итоги пользователя за активный год.
+
+#### Path params
+- `userId` (`int64`)
+
+#### Example
+```text
+POST /api/users/1/recap/share
+```
+
+Год не передаётся. Backend использует активный год итогов из конфигурации.
+
+#### Поведение
+1. Backend читает полный recap пользователя за активный год.
+2. Формирует публичную версию `ShareRecap` (Contract D).
+3. Сохраняет её в БД с уникальным токеном.
+4. Возвращает относительный путь для share-страницы.
+
+#### Response `201`
+```json
+{
+  "shareUrl": "/share/a1b2c3d4e5f6789012345678901234ab"
+}
+```
+
+Поля:
+- `shareUrl` — относительный путь. Frontend собирает полный URL на основе текущего домена.
+
+#### Ошибки
+- `400 VALIDATION_ERROR` — невалидный `userId`;
+- `404 RECAP_NOT_FOUND` — recap за активный год ещё не сгенерирован;
+- `500 INTERNAL_ERROR` — внутренняя ошибка.
+
+### 9) `GET /api/share/{token}`
+Получить публичные итоги по токену из share-ссылки.
+
+Эндпоинт публичный: не требует знания `userId`.
+
+#### Path params
+- `token` (`string`) — токен из share-ссылки
+
+#### Example
+```text
+GET /api/share/a1b2c3d4e5f6789012345678901234ab
+```
+
+#### Response `200`
+Тело ответа = Contract D `ShareRecap`:
+
+```json
+{
+  "year": 2026,
+  "role": {
+    "code": "seller",
+    "name": "Продавец",
+    "title": "В этом году ты был на волне продаж!"
+  },
+  "metrics": [
+    {
+      "type": "favorites_count",
+      "title": "Избранное",
+      "text": "Коллекция избранного за год — 3 объявлений.",
+      "highlights": ["3 объявлений"]
+    }
+  ],
+  "achievements": [
+    {
+      "code": "both_sides",
+      "name": "Две стороны рынка",
+      "imageUrl": "/static/achievements/two_faced_market.png"
+    }
+  ]
+}
+```
+
+#### Ошибки
+- `400 VALIDATION_ERROR` — пустой или невалидный `token`;
+- `404 SHARE_NOT_FOUND` — ссылка не найдена или больше недоступна;
+- `500 INTERNAL_ERROR` — внутренняя ошибка.
+
+### 10) `GET /api/health`
 Проверка живости сервиса.
 #### Response `200`
 ```
